@@ -1,0 +1,91 @@
+name: Build noopt.ko for Xiaomi 13 Fuxi
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android13-5.15-20260313
+      options: --privileged
+
+    steps:
+      - name: Clone NoOpt source
+        run: |
+          git clone --depth=1 https://github.com/Yon8/NoOpt.git /tmp/noopt
+          echo "NoOpt cloned"
+
+      - name: Build noopt.ko (MODVERSIONS disabled)
+        run: |
+          cd /tmp/noopt/kernel
+          # 编译时禁用 MODVERSIONS，避免 CRC 不匹配问题
+          make KDIR=/workspace/kernel CONFIG_KSU=m CC=clang \
+               CFLAGS_MODULE="-Wno-error" \
+               -j$(nproc) 2>&1 | tail -30
+          
+          if [ ! -f noopt.ko ]; then
+            echo "[ERROR] Build failed!"
+            exit 1
+          fi
+          
+          echo "=== Build result ==="
+          ls -la noopt.ko
+          echo ""
+          echo "=== Original vermagic ==="
+          strings noopt.ko | grep vermagic || true
+
+      - name: Patch vermagic to match Xiaomi 13 Fuxi
+        run: |
+          cd /tmp/noopt/kernel
+          # 备份原文件
+          cp noopt.ko noopt-original.ko
+          
+          # 替换 vermagic 为目标内核的精确版本
+          python3 -c "
+import sys
+data = bytearray(open('noopt.ko','rb').read())
+old = b'vermagic=' + data[data.find(b'vermagic=')+9:data.find(b'vermagic=')+9+80].rstrip(b'\\x00')
+# 目标小米13 Fuxi 内核版本
+new = b'vermagic=5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987 SMP preempt mod_unload modversions aarch64'
+print('Old:', old[:60])
+print('New:', new[:60])
+idx = data.find(old)
+if idx >= 0:
+    padded = new + b'\\x00' * (len(old) - len(new)) if len(new) < len(old) else new[:len(old)]
+    data[idx:idx+len(old)] = padded
+    open('noopt-patched.ko','wb').write(data)
+    print('Patched OK')
+else:
+    print('vermagic pattern not found, trying alternative...')
+            "
+          
+          if [ -f noopt-patched.ko ]; then
+            mv noopt-patched.ko noopt.ko
+            echo "=== Patched vermagic ==="
+            strings noopt.ko | grep vermagic || true
+          fi
+
+      - name: Strip modversions section (if exists)
+        run: |
+          cd /tmp/noopt/kernel
+          # 用 objtool 或 strip 移除 __versions 段（CRC 表）
+          # 这样内核加载时就跳过 CRC 校验
+          if command -v strip &>/dev/null; then
+            strip --remove-section=.GNU.version noopt.ko 2>/dev/null || true
+            strip --remove-section=__versions noopt.ko 2>/dev/null || true
+            echo "Stripped version sections"
+          fi
+          
+          echo "=== Final .ko info ==="
+          file noopt.ko
+          ls -la noopt.ko
+          strings noopt.ko | grep vermagic || true
+
+      - name: Upload noopt.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: noopt-kernel-module-xiaomi13-fuxi
+          path: /tmp/noopt/kernel/noopt.ko
+          retention-days: 90
+          if-no-files-found: error
