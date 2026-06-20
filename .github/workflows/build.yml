@@ -13,15 +13,7 @@ jobs:
       - name: Set kernel config to match Xiaomi 13 Fuxi
         run: |
           KDIR=/opt/ddk/kdir/android13-5.15
-          # Use the DDK's existing config
-          cd "$KDIR"
-          # Export the kernel config as-is (DDK config is already GKI android13-5.15)
-          # Patch vermagic to match Xiaomi 13 kernel
-          VERMAGIC_H=$(find "$KDIR" -name "vermagic.h" 2>/dev/null | head -1)
-          echo "Found vermagic.h at: $VERMAGIC_H"
-          [ -z "$VERMAGIC_H" ] && VERMAGIC_H="$KDIR/include/linux/vermagic.h"
-          sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$VERMAGIC_H" 2>/dev/null || true
-          cat "$VERMAGIC_H" || true
+          # Patch utsrelease.h to match Xiaomi 13 Fuxi kernel vermagic
           UTS_H="$KDIR/include/generated/utsrelease.h"
           if [ -f "$UTS_H" ]; then
             sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$UTS_H"
@@ -29,15 +21,18 @@ jobs:
             mkdir -p "$KDIR/include/generated" 2>/dev/null || true
             echo '#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"' > "$UTS_H"
           fi
+          echo "Patched utsrelease.h:"
+          cat "$UTS_H"
       - name: Build noopt.ko (CFI disabled)
         run: |
           cd /tmp/noopt/kernel
           # CFI_CLANG on Xiaomi kernel uses different type hashes than DDK.
           # Without CFI disabled, calling kprobe-resolved function pointers
           # (kern_path/path_put) triggers CFI mismatch -> kernel panic.
+          # Kbuild already has ccflags-y += -fno-sanitize=cfi
           make KDIR=/opt/ddk/kdir/android13-5.15 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang \
-            CONFIG_KSU=m CFLAGS_MODULE="-fno-sanitize=cfi -fno-sanitize=kcfi -Wno-error" \
+            CFLAGS_MODULE="-Wno-error" \
             -j$(nproc) 2>&1
           echo "=== Build result ==="
           ls -la noopt.ko 2>/dev/null || echo "BUILD FAILED"
