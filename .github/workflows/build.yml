@@ -9,7 +9,7 @@ jobs:
       options: --platform linux/amd64
     steps:
       - name: Clone NoOpt source
-        run: git clone --depth=1 https://github.com/Yon8/NoOpt.git /tmp/noopt
+        run: git clone --depth=1 https://github.com/leoegj/NoOpt.git /tmp/noopt
       - name: Patch vermagic.h to match Xiaomi 13 Fuxi kernel
         run: |
           VERMAGIC_H=$(find /opt/ddk/kdir/android13-5.15 -name "vermagic.h" 2>/dev/null | head -1)
