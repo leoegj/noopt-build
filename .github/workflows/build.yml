@@ -1,4 +1,4 @@
-name: Build noopt.ko for Xiaomi 13 Fuxi
+name: Build noopt.ko for Xiaomi 13 Fuxi (vermagic fixed)
 on:
   workflow_dispatch:
 jobs:
@@ -10,33 +10,29 @@ jobs:
     steps:
       - name: Clone NoOpt source
         run: git clone --depth=1 https://github.com/Yon8/NoOpt.git /tmp/noopt
+      - name: Patch vermagic.h to match Xiaomi 13 Fuxi kernel
+        run: |
+          VERMAGIC_H=$(find /opt/ddk/kdir/android13-5.15 -name "vermagic.h" 2>/dev/null | head -1)
+          echo "Found vermagic.h at: $VERMAGIC_H"
+          [ -z "$VERMAGIC_H" ] && VERMAGIC_H="/opt/ddk/kdir/android13-5.15/include/linux/vermagic.h"
+          cat "$VERMAGIC_H" || true
+          sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$VERMAGIC_H" 2>/dev/null || true
+          cat "$VERMAGIC_H" || true
+      - name: Patch utsrelease.h
+        run: |
+          UTS_H=$(find /opt/ddk/kdir/android13-5.15 -name "utsrelease.h" 2>/dev/null | head -1)
+          if [ -n "$UTS_H" ]; then
+            sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$UTS_H"
+          else
+            mkdir -p /opt/ddk/kdir/android13-5.15/include/generated 2>/dev/null || true
+            echo '#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"' > /opt/ddk/kdir/android13-5.15/include/generated/utsrelease.h
+          fi
       - name: Build noopt.ko
         run: |
           cd /tmp/noopt/kernel
-          make KDIR=/opt/ddk/kdir/android13-5.15 \
-               ARCH=arm64 \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               LLVM=1 \
-               CC=clang \
-               CONFIG_KSU=m \
-               CFLAGS_MODULE="-Wno-error" \
-               -j$(nproc)
+          make KDIR=/opt/ddk/kdir/android13-5.15 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang CONFIG_KSU=m CFLAGS_MODULE="-Wno-error" -j$(nproc)
           ls -la noopt.ko
-          strings noopt.ko | grep vermagic || true
-      - name: Patch vermagic to match Xiaomi 13 Fuxi kernel
-        run: |
-          cd /tmp/noopt/kernel
-          cp noopt.ko noopt-original.ko
-          OLD="vermagic=5.15.202-android13-5.15.202_r00-dirty"
-          NEW="vermagic=5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987 SMP preempt mod_unload modversions aarch64"
-          if grep -q "$OLD" noopt.ko; then
-            sed -i "s|$OLD|$NEW|g" noopt.ko
-            echo "Patched OK"
-          else
-            echo "WARNING: pattern not found, trying to find actual vermagic..."
-            strings noopt.ko | grep vermagic
-          fi
-          strings noopt.ko | grep vermagic || true
+          strings noopt.ko | grep -E "vermagic|5\.15\.178" || true
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
