@@ -1,4 +1,4 @@
-name: Build noopt.ko for Xiaomi 13 Fuxi (Xiaomi kernel source)
+name: Build noopt.ko for Xiaomi 13 Fuxi (CFI disabled)
 on:
   workflow_dispatch:
 jobs:
@@ -10,44 +10,35 @@ jobs:
     steps:
       - name: Clone NoOpt source
         run: git clone --depth=1 https://github.com/leoegj/NoOpt.git /tmp/noopt
-      - name: Clone Xiaomi 13 Fuxi kernel source
+      - name: Set kernel config to match Xiaomi 13 Fuxi
         run: |
-          git clone --depth=1 --branch fuxi-t-oss \
-            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            /tmp/xiaomi-kernel
-          echo "=== Cloned Xiaomi kernel source ==="
-          ls /tmp/xiaomi-kernel/
-      - name: Prepare kernel build environment
-        run: |
-          cd /tmp/xiaomi-kernel
-          # Use the DDK's existing kernel config as base (same GKI android13-5.15)
-          # Then add the Xiaomi-specific configs from the source
-          KDIR_OLD=/opt/ddk/kdir/android13-5.15
-          # Create necessary directories and link DDK infrastructure
-          mkdir -p include/config include/generated
-          # Copy DDK's .config as starting point, then apply Xiaomi config
-          cp "$KDIR_OLD/.config" .config 2>/dev/null || true
-          # Copy Xiaomi vendor config if exists
-          for cf in arch/arm64/configs/vendor/*fuxi* arch/arm64/configs/*fuxi*; do
-            if [ -f "$cf" ]; then
-              echo "Found Xiaomi defconfig: $cf"
-              cat "$cf" >> .config 2>/dev/null || true
-            fi
-          done
-          # Link key infrastructure from DDK
-          ln -sf "$KDIR_OLD/scripts" scripts 2>/dev/null || cp -a "$KDIR_OLD/scripts" . 2>/dev/null || true
-          ln -sf "$KDIR_OLD/tools" tools 2>/dev/null || true
-          # Make olddefconfig to resolve
-          make ARCH=arm64 olddefconfig 2>&1 | tail -5 || true
-          # Prepare kernel build (generate version.h, autoconf.h, etc.)
-          make ARCH=arm64 prepare 2>&1 | tail -10 || true
-          make ARCH=arm64 scripts 2>&1 | tail -5 || true
-          # Copy Module.symvers from DDK
-          cp "$KDIR_OLD/Module.symvers" Module.symvers 2>/dev/null || true
-      - name: Build noopt.ko against Xiaomi kernel source
+          KDIR=/opt/ddk/kdir/android13-5.15
+          # Use the DDK's existing config
+          cd "$KDIR"
+          # Export the kernel config as-is (DDK config is already GKI android13-5.15)
+          # Patch vermagic to match Xiaomi 13 kernel
+          VERMAGIC_H=$(find "$KDIR" -name "vermagic.h" 2>/dev/null | head -1)
+          echo "Found vermagic.h at: $VERMAGIC_H"
+          [ -z "$VERMAGIC_H" ] && VERMAGIC_H="$KDIR/include/linux/vermagic.h"
+          sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$VERMAGIC_H" 2>/dev/null || true
+          cat "$VERMAGIC_H" || true
+          UTS_H="$KDIR/include/generated/utsrelease.h"
+          if [ -f "$UTS_H" ]; then
+            sed -i 's/#define UTS_RELEASE ".*"/#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"/' "$UTS_H"
+          else
+            mkdir -p "$KDIR/include/generated" 2>/dev/null || true
+            echo '#define UTS_RELEASE "5.15.178-android13-8-00021-g6f2f96be86b9-ab13729987"' > "$UTS_H"
+          fi
+      - name: Build noopt.ko (CFI disabled)
         run: |
           cd /tmp/noopt/kernel
-          make KDIR=/tmp/xiaomi-kernel ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang CONFIG_KSU=m CFLAGS_MODULE="-Wno-error" -j$(nproc) 2>&1
+          # CFI_CLANG on Xiaomi kernel uses different type hashes than DDK.
+          # Without CFI disabled, calling kprobe-resolved function pointers
+          # (kern_path/path_put) triggers CFI mismatch -> kernel panic.
+          make KDIR=/opt/ddk/kdir/android13-5.15 ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang \
+            CONFIG_KSU=m CFLAGS_MODULE="-fno-sanitize=cfi -fno-sanitize=kcfi -Wno-error" \
+            -j$(nproc) 2>&1
           echo "=== Build result ==="
           ls -la noopt.ko 2>/dev/null || echo "BUILD FAILED"
       - name: Verify vermagic
