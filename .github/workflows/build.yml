@@ -1,26 +1,28 @@
 name: Build noopt.ko for Xiaomi 13 Fuxi
-
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/ylarod/ddk-min:android13-5.15-20260313
-      options: --privileged
-
+      image: ghcr.io/ylarod/ddk:android13-5.15
+      options: --platform linux/amd64
     steps:
       - name: Clone NoOpt source
         run: git clone --depth=1 https://github.com/Yon8/NoOpt.git /tmp/noopt
-
       - name: Build noopt.ko
         run: |
           cd /tmp/noopt/kernel
-          make KDIR=/workspace/kernel CONFIG_KSU=m CC=clang CFLAGS_MODULE="-Wno-error" -j$(nproc)
+          make KDIR=/opt/ddk/kdir/android13-5.15 \
+               ARCH=arm64 \
+               CROSS_COMPILE=aarch64-linux-gnu- \
+               LLVM=1 \
+               CC=clang \
+               CONFIG_KSU=m \
+               CFLAGS_MODULE="-Wno-error" \
+               -j$(nproc)
           ls -la noopt.ko
           strings noopt.ko | grep vermagic || true
-
       - name: Patch vermagic to match Xiaomi 13 Fuxi kernel
         run: |
           cd /tmp/noopt/kernel
@@ -31,10 +33,10 @@ jobs:
             sed -i "s|$OLD|$NEW|g" noopt.ko
             echo "Patched OK"
           else
-            echo "WARNING: pattern not found"
+            echo "WARNING: pattern not found, trying to find actual vermagic..."
+            strings noopt.ko | grep vermagic
           fi
           strings noopt.ko | grep vermagic || true
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
